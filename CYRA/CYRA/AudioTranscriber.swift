@@ -15,7 +15,6 @@ class AudioTranscriber: ObservableObject {
     private func setupWhisperKit() {
         Task {
             do {
-                // Initialize WhisperKit with default model
                 let whisperInstance = try await WhisperKit()
                 await MainActor.run {
                     whisperKit = whisperInstance
