@@ -1,83 +1,145 @@
-import Foundation
 import AVFoundation
+import Foundation
 
-class AudioRecorder: NSObject, AVAudioRecorderDelegate {
-    private var audioRecorder: AVAudioRecorder
-    private var currentAudioFileURL: URL
-    private var recordedURLs: [URL] = []
-    
-    private let settings = [
-        AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-        AVSampleRateKey: 12000,
-        AVNumberOfChannelsKey: 1,
-        AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
-    ]
+class AudioRecorder: NSObject {
+    private var audioRecorder: AVAudioRecorder?
+    private var audioFileURL: URL?
+    private var isRecording = false
     
     override init() throws {
-        let defaultURL = FileManager.default.temporaryDirectory.appendingPathComponent("default_recording.m4a")
-        self.currentAudioFileURL = defaultURL
-        self.audioRecorder = try AVAudioRecorder(url: defaultURL, settings: settings)
         super.init()
-        self.audioRecorder.delegate = self
+        try setupAudioSession()
+        try setupRecorder()
+    }
+    
+    private func setupAudioSession() throws {
+        let audioSession = AVAudioSession.sharedInstance()
+        try audioSession.setCategory(.playAndRecord, mode: .default)
+        try audioSession.setActive(true)
+        
+        // Request microphone permission
+        audioSession.requestRecordPermission { allowed in
+            if !allowed {
+                print("Microphone permission denied")
+            }
+        }
+    }
+    
+    private func setupRecorder() throws {
+        // Create unique filename
+        let fileName = "recording_\(Date().timeIntervalSince1970).m4a"
+        
+        // Get documents directory
+        guard let documentsDirectory = FileManager.default.urls(for: .documentDirectory,
+                                                               in: .userDomainMask).first else {
+            throw AudioRecorderError.cannotCreateFile
+        }
+        
+        audioFileURL = documentsDirectory.appendingPathComponent(fileName)
+        
+        guard let url = audioFileURL else {
+            throw AudioRecorderError.cannotCreateFile
+        }
+        
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 44100,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+        ]
+        
+        audioRecorder = try AVAudioRecorder(url: url, settings: settings)
+        audioRecorder?.delegate = self
+        audioRecorder?.prepareToRecord()
     }
     
     func startRecording() throws {
-        if audioRecorder.isRecording {
-            print("Recording already in progress")
+        guard let recorder = audioRecorder else {
+            throw AudioRecorderError.recorderNotInitialized
+        }
+        
+        guard !isRecording else {
+            print("Already recording")
             return
         }
         
-        let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
-        let newURL = FileManager.default.temporaryDirectory.appendingPathComponent("recording_\(timestamp).m4a")
-        self.audioRecorder = try AVAudioRecorder(url: newURL, settings: settings)
-        self.audioRecorder.delegate = self
-        self.currentAudioFileURL = newURL
-        
-        audioRecorder.record()
-        print("Recording started at: \(newURL)")
+        let success = recorder.record()
+        if success {
+            isRecording = true
+            print("Recording started")
+        } else {
+            throw AudioRecorderError.cannotStartRecording
+        }
     }
     
     func stopRecording() {
-        guard audioRecorder.isRecording else {
-            print("No active recording to stop")
+        guard let recorder = audioRecorder, isRecording else {
+            print("Not currently recording")
             return
         }
         
-        audioRecorder.stop()
-        recordedURLs.append(currentAudioFileURL)
-        print("Recording stopped, saved at: \(currentAudioFileURL)")
+        recorder.stop()
+        isRecording = false
+        print("Recording stopped")
+    }
+    
+    func getAudioFileURL() -> URL? {
+        return audioFileURL
+    }
+    
+    func isCurrentlyRecording() -> Bool {
+        return isRecording
+    }
+    
+    // Clean up old recordings if needed
+    func deleteRecording() {
+        guard let url = audioFileURL else { return }
         
-        // Reset to a default recorder to maintain non-optional state
         do {
-            let defaultURL = FileManager.default.temporaryDirectory.appendingPathComponent("default_recording.m4a")
-            self.audioRecorder = try AVAudioRecorder(url: defaultURL, settings: settings)
-            self.audioRecorder.delegate = self
-            self.currentAudioFileURL = defaultURL
+            try FileManager.default.removeItem(at: url)
+            print("Recording deleted")
         } catch {
-            print("Failed to reset recorder: \(error.localizedDescription)")
+            print("Error deleting recording: \(error)")
         }
     }
-    
-    func getLatestRecordingURL() -> URL {
-        return recordedURLs.last ?? currentAudioFileURL
-    }
-    
-    func getAllRecordedURLs() -> [URL] {
-        return recordedURLs
-    }
-    
-    // MARK: - AVAudioRecorderDelegate
+}
+
+// MARK: - AVAudioRecorderDelegate
+extension AudioRecorder: AVAudioRecorderDelegate {
     func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
+        isRecording = false
         if flag {
-            print("Recording finished successfully at: \(recorder.url)")
+            print("Recording finished successfully")
         } else {
-            print("Recording failed at: \(recorder.url)")
+            print("Recording failed")
         }
     }
     
     func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: Error?) {
+        isRecording = false
         if let error = error {
-            print("Recording error: \(error.localizedDescription)")
+            print("Audio recorder encode error: \(error)")
+        }
+    }
+}
+
+// MARK: - Custom Errors
+enum AudioRecorderError: Error, LocalizedError {
+    case cannotCreateFile
+    case recorderNotInitialized
+    case cannotStartRecording
+    case microphonePermissionDenied
+    
+    var errorDescription: String? {
+        switch self {
+        case .cannotCreateFile:
+            return "Cannot create audio file"
+        case .recorderNotInitialized:
+            return "Audio recorder not initialized"
+        case .cannotStartRecording:
+            return "Cannot start recording"
+        case .microphonePermissionDenied:
+            return "Microphone permission denied"
         }
     }
 }
