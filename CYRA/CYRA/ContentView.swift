@@ -1,61 +1,31 @@
-//
-//  ContentView.swift
-//  CYRA
-//
-//  Created by Erin Jerri on 5/31/25.
-//
-
 import SwiftUI
-import SwiftData
 
 struct ContentView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @State private var transcription: String = "Press to record"
 
     var body: some View {
-        NavigationSplitView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
+        VStack(spacing: 20) {
+            Text(transcription)
+                .padding()
+
+            Button("Record & Transcribe") {
+                Task {
+                    do {
+                        let recorder = try AudioRecorder()
+                        try recorder.startRecording()
+                        try await Task.sleep(nanoseconds: 5 * 1_000_000_000)
+                        recorder.stopRecording()
+
+                        let url = recorder.getLatestRecordingURL()
+                        let transcriber = try await AudioTranscriber()
+                        let text = try await transcriber.transcribeAudio(from: url)
+                        transcription = text
+                    } catch {
+                        transcription = "Error: \(error.localizedDescription)"
                     }
                 }
-                .onDelete(perform: deleteItems)
-            }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
-                }
-            }
-        } detail: {
-            Text("Select an item")
-        }
-    }
-
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
-        }
-    }
-
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
             }
         }
+        .padding()
     }
-}
-
-#Preview {
-    ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
 }
